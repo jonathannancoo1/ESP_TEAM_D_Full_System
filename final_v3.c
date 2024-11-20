@@ -310,19 +310,6 @@ while(1){    // Dynamically allocate buffer for storing ADC values
     vTaskDelete(NULL); // Terminate the task
 }
 
-void Kill_time(void *PVparameters){
-
-
-while(1){
-
-
-            ESP_LOGI(TAG, "kill time");
-    vTaskDelay(40000/portTICK_PERIOD_MS );
-}
-    vTaskDelete(NULL); // Terminate the task
-
-
-}
 
 void app_main(){
 
@@ -472,6 +459,5 @@ Values.pinconfig1=pinconfig;
 
 
     xTaskCreate(AdcTask, "AdcTask", 4096, &Values, 5, NULL);
-    xTaskCreate(Kill_time,"Kill time",4096,NULL,6,NULL);
 }
 
