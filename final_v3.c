@@ -22,6 +22,12 @@
 #include "driver/i2c.h"
 #include "i2cdev.h"
 #include "ds3231.h"
+#include "esp_sleep.h"
+#include "driver/gpio.h"
+#include "driver/uart.h"
+#include "driver/i2c.h"
+#include "ads111x.h"
+
 
 //settings
 #define EXAMPLE_ESP_WIFI_SSID      "ESPTEAMD"
@@ -33,6 +39,58 @@
 #define USER_INPUTS                 5         
 #define MAX_MSG_LENGTH              128      
 
+
+void AdcTask(void *pvParameters) {
+    int sample_idx = 0;
+    int16_t adc_value = 0;
+    unsigned long elapsed_time = 0;
+    unsigned long start_time=0;
+
+while(1){    // Dynamically allocate buffer for storing ADC values
+    int16_t *adc_buffer = (int16_t *)malloc(SAMPLE_COUNT * sizeof(int16_t));
+    if (adc_buffer == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate memory for ADC buffer");
+        vTaskDelete(NULL); // Terminate the task if memory allocation fails
+        return;
+    }
+
+    start_time = xTaskGetTickCount();
+
+    while (elapsed_time < pdMS_TO_TICKS(SAMPLE_DURATION_SEC * 1000)) { // Run for specified duration
+        // Get ADC value
+         ads111x_get_value(&dev, &adc_value) 
+            // Store ADC value in buffer
+            adc_buffer[sample_idx] = adc_value;
+
+            // Increment sample index
+            sample_idx++;
+
+            // Log the sample
+            ESP_LOGI(TAG, "Sample %d: %d", sample_idx, adc_value);
+    
+
+        // Update elapsed time
+        elapsed_time = xTaskGetTickCount() - start_time;
+
+        // Optional delay to avoid tight loop
+        vTaskDelay(pdMS_TO_TICKS(10)); // Adjust delay as needed
+    }
+
+    // Free allocated memory
+    free(adc_buffer);
+    ESP_LOGI(TAG, "ADC Task completed");
+
+}
+    vTaskDelete(NULL); // Terminate the task
+}
+
+#define SAMPLE_RATE_HZ 64   // Data rate for the ADS111X, in samples per second
+#define SAMPLE_DURATION_SEC 5 // Duration in seconds (1 second)
+#define SAMPLE_COUNT (SAMPLE_RATE_HZ * SAMPLE_DURATION_SEC)-3 // Total samples to collect (128 for 1 second)
+int8_t binary_buffer[SAMPLE_COUNT];
+
+// Buffer to store ADC values
+int16_t adc_buffer[SAMPLE_COUNT];
 
 static char stored_messages[USER_INPUTS][MAX_MSG_LENGTH];
 static int message_index = 0;
@@ -268,16 +326,16 @@ i++;
 
 // Allowing_the user to specify how often to write to the Non Volotile Storage
 
-    int Interval_At_which_to_log=60;
+    int Interval_At_which_to_log=1;
 
       if (strstr(stored_messages[i], "a") != NULL) {
-            Interval_At_which_to_log = 30;  // Assign value for Option A
+            Interval_At_which_to_log = 1;  // Assign value for Option A
         } else if (strstr(stored_messages[i], "b") != NULL) {
-            Interval_At_which_to_log = 60;  // Assign value for Option B
+            Interval_At_which_to_log = 2;  // Assign value for Option B
         } else if (strstr(stored_messages[i], "c") != NULL) {
-            Interval_At_which_to_log = 90;  // Assign value for Option C
+            Interval_At_which_to_log = 3;  // Assign value for Option C
         }else if (strstr(stored_messages[i], "d") != NULL) {
-            Interval_At_which_to_log = 120;  // Assign value for Option C
+            Interval_At_which_to_log = 4;  // Assign value for Option C
         }
 
         
@@ -317,7 +375,7 @@ int Reading_Numbers=5;
     printf("User Selections Based\n");
     printf("------------------------------------\n");
     printf("Interval at which to Display: %d seconds\n", Interval_At_which_to_print);
-    printf("Interval at which to log: %d seconds\n", Interval_At_which_to_log);
+    printf("Interval at which to log: %d seconds\n", Interval_At_which_to_log*Interval_At_which_to_print);
     printf("File Format: %s\n", (File_Format == 0) ? "Format A" : "Format B");
     printf("Number of Readings to be stored: %d\n", Reading_Numbers);
     printf("------------------------------------\n");
@@ -353,9 +411,21 @@ i2c_dev_t dev1;
 
 i2c_dev_t dev2;
     memset(&dev, 0, sizeof(i2c_dev_t));
-    dev1.addr=DS3231_ADDR;
-    dev1.cfg=pinconfig;
-    dev1.port=I2C_NUM_0;
+    dev2.addr=ADS111X_ADDR_GND;
+    dev2.cfg=pinconfig;
+    dev2.port=I2C_NUM_0;
+
+//Setting up the ADC
+
+ads111x_init_desc(&dev,ADS111X_ADDR_GND,I2C_NUM_0,GPIO_NUM_2,GPIO_NUM_0);
+ads111x_set_gain(&dev,ADS111X_GAIN_4V096);
+ads111x_set_input_mux(&dev,ADS111X_MUX_0_GND);
+ads111x_set_mode(&dev,ADS111X_MODE_CONTINUOUS);
+ads111x_set_data_rate(&dev,ADS111X_DATA_RATE_128)
+
+
+
+
 
 
 esp_err_t installer = ds3231_init_desc(&dev,0,GPIO_NUM_2,GPIO_NUM_0);
@@ -366,5 +436,14 @@ esp_err_t installer = ds3231_init_desc(&dev,0,GPIO_NUM_2,GPIO_NUM_0);
 
 tasks_params_t Values;
 Values.dev_RTC=dev1;
+Values.dev_ADC=dev2;
+Values.RTC_interval=Interval_At_which_to_print;
+Values.NVS_interval=Interval_At_which_to_log*Interval_At_which_to_print;
+Values.message_frmat_choice=File_Format;
+Values.pinconfig1=pinconfig;
+
+
+    xTaskCreate(AdcTask, "AdcTask", 4096, NULL, 5, NULL);
 
 }
+
